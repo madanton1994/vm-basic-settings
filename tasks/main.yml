@@ -1,0 +1,76 @@
+---
+# tasks file for basic
+- name: Set authorized key for user ubuntu copying it from current user
+  ansible.posix.authorized_key:
+    user: "{{os_user}}"
+    state: present
+    key: "{{ lookup('file', lookup('env','HOME') + '/.ssh/id_rsa.pub') }}"
+
+- name: Install base packages
+  ansible.builtin.apt:
+    name: "{{main_packages}}"
+    state: present
+    update_cache: yes
+
+- name: One way to avoid apt_key once it is removed from your distro
+  block:
+    - name: Add an Apt signing key to a specific keyring file
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+        state: present
+
+    - name: Add docker repo
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{arch_name}} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+  rescue:
+    - name: Rollback changes
+      ansible.builtin.file:
+        path: /etc/apt/keyrings/docker.gpg
+        state: absent
+
+    - name: Add docker repo
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{arch_name}} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: absent
+
+- name: Install docker
+  block:
+    - name: "Install docker packages"
+      ansible.builtin.apt:
+        name: "{{docker_packages}}"
+        state: present
+        update_cache: yes
+
+    - name: Added docker group
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Added user to docker group
+      ansible.builtin.user:
+        name: "{{os_user}}"
+        append: yes
+        groups: docker
+  rescue:
+    - name: Uninstall docker packages if error
+      ansible.builtin.apt:
+        name: "{{docker_packages}}"
+        state: absent
+        autoclean: yes
+
+    - name: Added docker group
+      ansible.builtin.group:
+        name: docker
+        state: absent
+
+- name: Set a hostname
+  ansible.builtin.hostname:
+    name: "{{inventory_hostname}}"
+  register: hostname_changed
+
+- name: Reboot after change hostname
+  ansible.builtin.reboot:
+  when: hostname_changed is changed
